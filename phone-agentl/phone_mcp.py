@@ -80,43 +80,21 @@ def dump_ui():
         raise ToolError(f"cannot read UI dump: {e}")
 
 
-def node_labels(node):
-    """(text, content-desc, hint, short resource id) of a UI node."""
-    text = node.get("text", "").strip().replace("\n", " ")
-    desc = node.get("content-desc", "").strip().replace("\n", " ")
-    hint = node.get("hint", "").strip().replace("\n", " ")
-    rid = node.get("resource-id", "")
-    return text, desc, hint, (rid.split("/")[-1] if rid else "")
-
-
-def is_edit(node):
-    return "EditText" in node.get("class", "")
-
-
-def display_label(node):
-    text, desc, hint, idn = node_labels(node)
-    if text or desc:
-        return text or desc
-    if hint:
-        return f"hint: {hint}"
-    if idn and (node.get("clickable") == "true" or is_edit(node)):
-        return f"#{idn}"  # unlabeled but tappable/editable: the id at least says what it is
-    return ""
-
-
 def compact_ui_tree(xml_text):
     root = ET.fromstring(xml_text)
     lines, pkg = [], None
     for node in root.iter("node"):
         pkg = pkg or node.get("package")
+        text = node.get("text", "").strip()
+        desc = node.get("content-desc", "").strip()
         clickable = node.get("clickable") == "true"
         focused = node.get("focused") == "true"
         cls = node.get("class", "").split(".")[-1]
         bounds = node.get("bounds", "")
-        label = display_label(node)
+        label = (text or desc).replace("\n", " ")
         if len(label) > MAX_LABEL:
             label = label[:MAX_LABEL] + "..."
-        if (not label and not clickable and not is_edit(node)) or not bounds:
+        if (not label and not clickable) or not bounds:
             continue
         try:
             cx, cy = center(bounds)
@@ -133,27 +111,24 @@ def compact_ui_tree(xml_text):
 
 
 def find_matches(query):
-    """Elements matching text/desc/hint (exact first) or, failing that, any substring incl. id."""
+    """Elements whose text/content-desc matches: exact first, then substring; clickable first."""
     q = query.strip().lower()
     root = ET.fromstring(dump_ui())
     exact, partial = [], []
     for node in root.iter("node"):
+        label = (node.get("text", "").strip() or node.get("content-desc", "").strip())
         bounds = node.get("bounds", "")
-        if not bounds:
+        if not label or not bounds:
             continue
-        text, desc, hint, idn = node_labels(node)
-        shown = (text or desc or hint or idn)
-        if not shown:
-            continue
+        low = label.replace("\n", " ").lower()
         try:
             cx, cy = center(bounds)
         except Exception:
             continue
-        item = (shown[:MAX_LABEL], cx, cy, node.get("clickable") == "true")
-        primary = [x.lower() for x in (text, desc, hint) if x]
-        if q in primary:
+        item = (label.replace("\n", " ")[:MAX_LABEL], cx, cy, node.get("clickable") == "true")
+        if low == q:
             exact.append(item)
-        elif any(q in x for x in primary) or (q and q in idn.lower().replace("_", " ")):
+        elif q in low:
             partial.append(item)
     key = lambda it: (not it[3])
     return sorted(exact, key=key) + sorted(partial, key=key)
@@ -283,9 +258,7 @@ def tap_text(text, index=0):
     i = max(0, min(int(index), len(matches) - 1))
     label, cx, cy, _ = matches[i]
     act(INPUT, "tap", str(cx), str(cy))
-    others = [f"'{m[0]}' at ({m[1]},{m[2]})" for j, m in enumerate(matches[:6]) if j != i]
-    extra = f"; other matches: {', '.join(others)}" if others else ""
-    return f"tapped '{label}' at ({cx},{cy}) [match {i + 1} of {len(matches)}]{extra}"
+    return f"tapped '{label}' at ({cx},{cy}) [match {i + 1} of {len(matches)}]"
 
 
 @tool("Long-press at (x, y) (like a right-click / context menu).",
@@ -342,50 +315,6 @@ def type_text(text):
         raise ToolError("type_text supports ASCII only (emoji/non-Latin text would be dropped silently)")
     act(INPUT, "text", text)
     return f"typed: {text}"
-
-
-@tool("Type into a text field in ONE step: taps the field, types `text`, checks it appeared, and "
-      "optionally presses Enter (submit=true, e.g. to run a search). `field` = label/hint/id of the "
-      "field; default: the focused or first text field, else the top-most 'search' element. "
-      "Use this for search boxes and forms (ASCII only).",
-      {"text": "string", "field": "string", "submit": "boolean"}, optional=["field", "submit"])
-def type_into(text, field=None, submit=False):
-    if any(ord(c) > 127 for c in text):
-        raise ToolError("type_into supports ASCII only")
-    nodes = [n for n in ET.fromstring(dump_ui()).iter("node") if n.get("bounds")]
-    srcs = lambda n: [x.lower() for x in (*node_labels(n)[:3], node_labels(n)[3].replace("_", " ")) if x]
-    target = None
-    if field:
-        f = str(field).lower()
-        cands = [n for n in nodes if any(f in x for x in srcs(n))]
-        cands.sort(key=lambda n: (not is_edit(n), n.get("clickable") != "true"))
-        target = cands[0] if cands else None
-    else:
-        edits = [n for n in nodes if is_edit(n)]
-        focused = [n for n in edits if n.get("focused") == "true"]
-        target = (focused or edits or [None])[0]
-        if target is None:
-            cands = [n for n in nodes if any("search" in x for x in srcs(n))]
-            cands.sort(key=lambda n: (n.get("clickable") != "true", center(n.get("bounds"))[1]))
-            target = cands[0] if cands else None
-    if target is None:
-        labels = [m[0] for m in find_matches("")][:20]
-        raise ToolError(f"no text field found{' matching ' + repr(field) if field else ''}. "
-                        f"Visible labels: {labels}")
-    cx, cy = center(target.get("bounds"))
-    label = display_label(target) or target.get("class", "field")
-    act(INPUT, "tap", str(cx), str(cy))
-    time.sleep(1.0)                      # let the keyboard / real input field appear
-    act(INPUT, "text", text)
-    time.sleep(0.5)
-    probe = text[:12].lower()
-    seen = any(probe in (n.get("text", "") + " " + n.get("content-desc", "")).lower()
-               for n in ET.fromstring(dump_ui()).iter("node"))
-    if submit:
-        act(INPUT, "keyevent", "KEYCODE_ENTER")
-    status = "and it is visible in the field" if seen else \
-        "but could not confirm it appeared (the field may not have focus; check the screen)"
-    return f"tapped '{label}' at ({cx},{cy}), typed '{text}' {status}" + (", pressed Enter" if submit else "")
 
 
 @tool("Press a key or combo. Names: Return, Tab, Escape, BackSpace, Back, Home, Up/Down/Left/Right, "
@@ -536,8 +465,6 @@ def _coerce(args, params):
                 v = int(float(v))
             elif t == "number":
                 v = float(v)
-            elif t == "boolean":
-                v = v if isinstance(v, bool) else str(v).strip().lower() in ("1", "true", "yes", "y")
         except (TypeError, ValueError):
             raise ToolError(f"parameter '{k}' must be a {t}, got {v!r}")
         out[k] = v

@@ -7,7 +7,7 @@ No pip packages needed (Python stdlib only). Optional: `pkg install python-pillo
 
 ## Files
 - `agent.py`      - the menu app (run this)
-- `phone_mcp.py`  - stdlib MCP server (JSON-RPC over stdio), 22 phone tools
+- `phone_mcp.py`  - stdlib MCP server (JSON-RPC over stdio), 21 phone tools
 - `common.py`     - MCP client, focus guard, screen/screenshot history pruning
 - `runs.jsonl`    - created on first run: past runs (goal + result, plain text, local only)
 
@@ -43,19 +43,12 @@ Default model names go stale: if a backend returns 404, type a current one at th
 Coordinates everywhere are screen pixels.
 - See: `get_screen_state` (compact tree, FOCUSED marks the focused field), `screenshot`, `zoom`
   (vision only), `get_screen_state_raw`, `get_current_app`
-- Touch: `tap`, `tap_text`, `type_into`, `long_press`, `swipe`, `drag`, `scroll`, `touch` (DOWN/MOVE/UP)
-- Keys: `type_text` (ASCII; needs a FOCUSED field), `key_event` (names, `ctrl+a` combos, repeat), `hold_key`
+- Touch: `tap`, `tap_text`, `long_press`, `swipe`, `drag`, `scroll`, `touch` (DOWN/MOVE/UP)
+- Keys: `type_text` (ASCII), `key_event` (names, `ctrl+a` combos, repeat), `hold_key`
 - Flow: `wait`, `wait_for_text`
 - Apps: `launch_app`, `find_package`, `open_url`, `open_spotify_search`
 No touchscreen equivalent (skipped): mouse_move, middle/triple click, cursor_position.
 `double_click` is skipped: each rish call takes ~1 s, too slow for a double tap.
-
-`type_into(text, field?, submit?)` taps a text field (or the top-most "search" element),
-types, checks the text appeared and optionally presses Enter: use it for search boxes.
-The screen tree now labels unlabeled fields (`hint: ...` placeholders, `#resource-id`), because
-many apps keep the placeholder in `hint`, not `text`.
-`touch`, `hold_key`, `get_screen_state_raw`, `get_current_app` are hidden from the model by
-default (saves tokens); `PHONE_AGENT_ALL_TOOLS=1` exposes them.
 
 ## Behaviour (mirrors computer use conventions)
 - The model may issue several actions in one turn; they run in order and stop at the first
@@ -68,14 +61,7 @@ default (saves tokens); `PHONE_AGENT_ALL_TOOLS=1` exposes them.
   confirmation gate is the real safeguard.
 - Only the newest screen dump and newest screenshot stay in the LLM context; 413/429/5xx are
   retried with backoff.
-- After 3 identical calls the model gets a "this isn't working, try something different" note.
 - Ctrl+C during a run stops it and returns to the menu.
-
-## Token / rate limits
-Every request carries ~1.9k fixed tokens (tool schemas + system prompt) plus the history.
-Groq's free tier allows 8,000 tokens/min for gpt-oss-120b, i.e. only a few steps per minute:
-the 429 waits you see are expected, not a bug. Use a provider/tier with higher limits for
-long tasks. The `~tokens incl. tools` figure printed per step shows what each request costs.
 
 ## Notes
 - If Termux runs as a floating window it can swallow keystrokes: use full-screen or split.

@@ -1,0 +1,1 @@
+{"time": "2026-09-29T00:31:10", "backend": "groq", "model": "openai/gpt-oss-120b", "goal": "Play Lanterns Latest episode inn JioHotstar app", "status": "stopped", "result": "max steps reached without DONE", "steps": 20, "seconds": 248.9}
